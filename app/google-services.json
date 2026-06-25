@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "767418776566",
+    "project_id": "hunab-ku-ac4e3",
+    "storage_bucket": "hunab-ku-ac4e3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:767418776566:android:1a659d4b6ba8be013225d7",
+        "android_client_info": {
+          "package_name": "com.hunabku.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNRSoY1VReSSaofiHlR5sAPMVPBuIFMpk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
