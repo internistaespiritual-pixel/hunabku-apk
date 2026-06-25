@@ -11,32 +11,33 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Create project files
+      - name: Build APK with Gradle
         run: |
-          cat > settings.gradle << 'EOF'
+          gradle init --type basic --dsl groovy --no-incubating 2>/dev/null || true
+          cat > build.gradle << 'GRADLE'
+          plugins { id 'com.android.application' version '8.1.0' apply false }
+          GRADLE
+          cat > settings.gradle << 'GRADLE'
+          pluginManagement { repositories { google(); mavenCentral() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
           include ':app'
-          EOF
-          cat > app/build.gradle << 'EOF'
-          apply plugin: 'com.android.application'
+          GRADLE
+          mkdir -p app/src/main
+          cat > app/build.gradle << 'GRADLE'
+          plugins { id 'com.android.application' }
           android {
-            compileSdkVersion 34
+            compileSdk 34
             defaultConfig {
               applicationId "com.hunabku.app"
-              minSdkVersion 21
-              targetSdkVersion 34
+              minSdk 21
+              targetSdk 34
               versionCode 1
               versionName "1.0"
             }
           }
-          dependencies {
-            implementation 'androidx.appcompat:appcompat:1.6.1'
-          }
-          EOF
-      - name: Build APK
-        run: ./gradlew assembleDebug
+          GRADLE
+          ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: hunabku-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/debug/
