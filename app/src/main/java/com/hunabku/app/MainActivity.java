@@ -1,11 +1,14 @@
 package com.hunabku.app;
 
 import android.Manifest;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.speech.tts.TextToSpeech;
-import android.speech.tts.UtteranceProgressListener;
+import android.os.IBinder;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -20,14 +23,27 @@ import org.json.JSONArray;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
-    private TextToSpeech tts;
-    private List<String> oraciones;
-    private int indiceActual = 0;
+    private HunabAudioService audioService;
+    private boolean audioServiceBound = false;
+
+    private final ServiceConnection audioConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+            HunabAudioService.LocalBinder b = (HunabAudioService.LocalBinder) binder;
+            audioService = b.getService();
+            audioServiceBound = true;
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            audioServiceBound = false;
+            audioService = null;
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,77 +75,50 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
 
-        iniciarTTS();
         webView.addJavascriptInterface(new TTSBridge(), "AndroidTTS");
+
+        HunabAudioService.setControlCallback(new HunabAudioService.ControlCallback() {
+            @Override
+            public void onSiguienteSolicitado() {
+                ejecutarEnWeb("if(window.hkModuloSiguiente)window.hkModuloSiguiente();");
+            }
+
+            @Override
+            public void onAnteriorSolicitado() {
+                ejecutarEnWeb("if(window.hkModuloAnterior)window.hkModuloAnterior();");
+            }
+
+            @Override
+            public void onTerminoLectura() {
+                ejecutarEnWeb("if(window.hkAndroidTTSEnded)window.hkAndroidTTSEnded();");
+            }
+        });
+
+        Intent servicioAudio = new Intent(this, HunabAudioService.class);
+        startService(servicioAudio);
+        bindService(servicioAudio, audioConnection, Context.BIND_AUTO_CREATE);
 
         webView.loadUrl("https://inter2.pythonanywhere.com");
     }
 
-    private void iniciarTTS() {
-        tts = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS && tts != null) {
-                int resultado = tts.setLanguage(new Locale("es", "MX"));
-                if (resultado == TextToSpeech.LANG_MISSING_DATA || resultado == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    tts.setLanguage(new Locale("es"));
-                }
-                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override
-                    public void onStart(String utteranceId) {
-                        indiceActual = parseIndice(utteranceId);
-                    }
-
-                    @Override
-                    public void onDone(String utteranceId) {
-                        avisarSiEsLaUltima(utteranceId);
-                    }
-
-                    @Override
-                    public void onError(String utteranceId) {
-                        avisarSiEsLaUltima(utteranceId);
-                    }
-                });
-            }
+    private void ejecutarEnWeb(String js) {
+        if (isFinishing() || isDestroyed()) return;
+        runOnUiThread(() -> {
+            if (webView != null) webView.evaluateJavascript(js, null);
         });
-    }
-
-    private int parseIndice(String utteranceId) {
-        try {
-            return Integer.parseInt(utteranceId.replace("hk_", ""));
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
-    private void avisarSiEsLaUltima(String utteranceId) {
-        int idx = parseIndice(utteranceId);
-        if (oraciones != null && idx == oraciones.size() - 1) {
-            runOnUiThread(() -> webView.evaluateJavascript(
-                    "if(window.hkAndroidTTSEnded)window.hkAndroidTTSEnded();", null));
-        }
-    }
-
-    private void encolarDesde(int desde) {
-        if (tts == null || oraciones == null || desde >= oraciones.size()) return;
-        boolean primero = true;
-        for (int i = desde; i < oraciones.size(); i++) {
-            Bundle params = new Bundle();
-            int modo = primero ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
-            tts.speak(oraciones.get(i), modo, params, "hk_" + i);
-            primero = false;
-        }
     }
 
     private class TTSBridge {
         @JavascriptInterface
-        public void speak(String oracionesJson) {
+        public void speak(String oracionesJson, String titulo) {
             runOnUiThread(() -> {
                 try {
                     JSONArray arr = new JSONArray(oracionesJson);
                     List<String> lista = new ArrayList<>();
                     for (int i = 0; i < arr.length(); i++) lista.add(arr.getString(i));
-                    oraciones = lista;
-                    indiceActual = 0;
-                    encolarDesde(0);
+                    if (audioServiceBound && audioService != null) {
+                        audioService.hablar(lista, titulo);
+                    }
                 } catch (Exception e) {
                     android.util.Log.e("HK_TTS", "Error parseando oraciones", e);
                 }
@@ -139,30 +128,30 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void pause() {
             runOnUiThread(() -> {
-                if (tts != null) tts.stop();
+                if (audioServiceBound && audioService != null) audioService.pausar();
             });
         }
 
         @JavascriptInterface
         public void resume() {
-            runOnUiThread(() -> encolarDesde(indiceActual));
+            runOnUiThread(() -> {
+                if (audioServiceBound && audioService != null) audioService.reanudar();
+            });
         }
 
         @JavascriptInterface
         public void stop() {
             runOnUiThread(() -> {
-                if (tts != null) tts.stop();
-                oraciones = null;
-                indiceActual = 0;
+                if (audioServiceBound && audioService != null) audioService.detener();
             });
         }
     }
 
     @Override
     protected void onDestroy() {
-        if (tts != null) {
-            tts.stop();
-            tts.shutdown();
+        if (audioServiceBound) {
+            unbindService(audioConnection);
+            audioServiceBound = false;
         }
         super.onDestroy();
     }
