@@ -16,12 +16,18 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.google.firebase.messaging.FirebaseMessaging;
 
+import org.json.JSONArray;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private TextToSpeech tts;
+    private List<String> oraciones;
+    private int indiceActual = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,41 +74,86 @@ public class MainActivity extends AppCompatActivity {
                 }
                 tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                     @Override
-                    public void onStart(String utteranceId) {}
+                    public void onStart(String utteranceId) {
+                        indiceActual = parseIndice(utteranceId);
+                    }
 
                     @Override
                     public void onDone(String utteranceId) {
-                        runOnUiThread(() -> webView.evaluateJavascript(
-                                "if(window.hkAndroidTTSEnded)window.hkAndroidTTSEnded();", null));
+                        avisarSiEsLaUltima(utteranceId);
                     }
 
                     @Override
                     public void onError(String utteranceId) {
-                        runOnUiThread(() -> webView.evaluateJavascript(
-                                "if(window.hkAndroidTTSEnded)window.hkAndroidTTSEnded();", null));
+                        avisarSiEsLaUltima(utteranceId);
                     }
                 });
             }
         });
     }
 
+    private int parseIndice(String utteranceId) {
+        try {
+            return Integer.parseInt(utteranceId.replace("hk_", ""));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private void avisarSiEsLaUltima(String utteranceId) {
+        int idx = parseIndice(utteranceId);
+        if (oraciones != null && idx == oraciones.size() - 1) {
+            runOnUiThread(() -> webView.evaluateJavascript(
+                    "if(window.hkAndroidTTSEnded)window.hkAndroidTTSEnded();", null));
+        }
+    }
+
+    private void encolarDesde(int desde) {
+        if (tts == null || oraciones == null || desde >= oraciones.size()) return;
+        boolean primero = true;
+        for (int i = desde; i < oraciones.size(); i++) {
+            Bundle params = new Bundle();
+            int modo = primero ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
+            tts.speak(oraciones.get(i), modo, params, "hk_" + i);
+            primero = false;
+        }
+    }
+
     private class TTSBridge {
         @JavascriptInterface
-        public void speak(String texto) {
+        public void speak(String oracionesJson) {
             runOnUiThread(() -> {
-                if (tts != null) {
-                    Bundle params = new Bundle();
-                    tts.speak(texto, TextToSpeech.QUEUE_FLUSH, params, "hkUtterance");
+                try {
+                    JSONArray arr = new JSONArray(oracionesJson);
+                    List<String> lista = new ArrayList<>();
+                    for (int i = 0; i < arr.length(); i++) lista.add(arr.getString(i));
+                    oraciones = lista;
+                    indiceActual = 0;
+                    encolarDesde(0);
+                } catch (Exception e) {
+                    android.util.Log.e("HK_TTS", "Error parseando oraciones", e);
                 }
             });
         }
 
         @JavascriptInterface
+        public void pause() {
+            runOnUiThread(() -> {
+                if (tts != null) tts.stop();
+            });
+        }
+
+        @JavascriptInterface
+        public void resume() {
+            runOnUiThread(() -> encolarDesde(indiceActual));
+        }
+
+        @JavascriptInterface
         public void stop() {
             runOnUiThread(() -> {
-                if (tts != null) {
-                    tts.stop();
-                }
+                if (tts != null) tts.stop();
+                oraciones = null;
+                indiceActual = 0;
             });
         }
     }
