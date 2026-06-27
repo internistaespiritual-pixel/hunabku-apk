@@ -1,47 +1,51 @@
 package com.hunabku.app;
 
 import android.Manifest;
-import android.animation.ObjectAnimator;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.speech.tts.TextToSpeech;
-import android.speech.tts.UtteranceProgressListener;
-import android.view.View;
-import android.view.animation.LinearInterpolator;
+import android.os.IBinder;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.ImageView;
-import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.google.firebase.messaging.FirebaseMessaging;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements HunabAudioService.ControlCallback {
 
     private WebView webView;
-    private TextToSpeech tts;
-    private List<String> oraciones;
-    private int indiceActual = 0;
+    private HunabAudioService audioService;
+    private boolean serviceVinculado = false;
 
-    private View splashOverlay;
-    private TextView splashTimer;
-    private ObjectAnimator splashRotacion;
-    private Handler splashHandler;
-    private int splashSegundos = 0;
-    private boolean splashOculto = false;
+    private final ServiceConnection conexion = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+            HunabAudioService.LocalBinder lb = (HunabAudioService.LocalBinder) binder;
+            audioService = lb.getService();
+            serviceVinculado = true;
+            HunabAudioService.setControlCallback(MainActivity.this);
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            serviceVinculado = false;
+            audioService = null;
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,128 +74,53 @@ public class MainActivity extends AppCompatActivity {
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-
-        iniciarSplash();
-
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                ocultarSplash();
-            }
-        });
+        webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
 
-        iniciarTTS();
         webView.addJavascriptInterface(new TTSBridge(), "AndroidTTS");
+
+        Intent intentServicio = new Intent(this, HunabAudioService.class);
+        startService(intentServicio);
+        bindService(intentServicio, conexion, Context.BIND_AUTO_CREATE);
 
         webView.loadUrl("https://inter2.pythonanywhere.com");
     }
 
-    private void iniciarSplash() {
-        splashOverlay = findViewById(R.id.splashOverlay);
-        ImageView splashLogo = findViewById(R.id.splashLogo);
-        splashTimer = findViewById(R.id.splashTimer);
-
-        splashRotacion = ObjectAnimator.ofFloat(splashLogo, "rotation", 0f, 360f);
-        splashRotacion.setDuration(2200);
-        splashRotacion.setRepeatCount(ObjectAnimator.INFINITE);
-        splashRotacion.setInterpolator(new LinearInterpolator());
-        splashRotacion.start();
-
-        splashHandler = new Handler(Looper.getMainLooper());
-        splashHandler.post(tickSplash);
-
-        // Seguridad: si por algo onPageFinished no llega, ocultar a los 20s
-        splashHandler.postDelayed(this::ocultarSplash, 20000);
+    private void evaluarJS(String js) {
+        runOnUiThread(() -> webView.evaluateJavascript(js, null));
     }
 
-    private final Runnable tickSplash = new Runnable() {
-        @Override
-        public void run() {
-            if (splashOculto || splashTimer == null) return;
-            splashSegundos++;
-            splashTimer.setText("Cargando... " + splashSegundos + "s");
-            splashHandler.postDelayed(this, 1000);
-        }
-    };
-
-    private void ocultarSplash() {
-        if (splashOculto || splashOverlay == null) return;
-        splashOculto = true;
-        if (splashRotacion != null) splashRotacion.cancel();
-        splashOverlay.animate()
-                .alpha(0f)
-                .setDuration(350)
-                .withEndAction(() -> splashOverlay.setVisibility(View.GONE))
-                .start();
+    @Override
+    public void onSiguienteSolicitado() {
+        evaluarJS("window.hkAudioState.continuar=true; if(typeof window.hkModuloSiguiente==='function')window.hkModuloSiguiente();");
     }
 
-    private void iniciarTTS() {
-        tts = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS && tts != null) {
-                int resultado = tts.setLanguage(new Locale("es", "MX"));
-                if (resultado == TextToSpeech.LANG_MISSING_DATA || resultado == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    tts.setLanguage(new Locale("es"));
-                }
-                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override
-                    public void onStart(String utteranceId) {
-                        indiceActual = parseIndice(utteranceId);
-                    }
-
-                    @Override
-                    public void onDone(String utteranceId) {
-                        avisarSiEsLaUltima(utteranceId);
-                    }
-
-                    @Override
-                    public void onError(String utteranceId) {
-                        avisarSiEsLaUltima(utteranceId);
-                    }
-                });
-            }
-        });
+    @Override
+    public void onAnteriorSolicitado() {
+        evaluarJS("window.hkAudioState.continuar=true; if(typeof window.hkModuloAnterior==='function')window.hkModuloAnterior();");
     }
 
-    private int parseIndice(String utteranceId) {
-        try {
-            return Integer.parseInt(utteranceId.replace("hk_", ""));
-        } catch (Exception e) {
-            return 0;
-        }
+    @Override
+    public void onTerminoLectura() {
+        evaluarJS("if(window.hkAndroidTTSEnded)window.hkAndroidTTSEnded();");
     }
 
-    private void avisarSiEsLaUltima(String utteranceId) {
-        int idx = parseIndice(utteranceId);
-        if (oraciones != null && idx == oraciones.size() - 1) {
-            runOnUiThread(() -> webView.evaluateJavascript(
-                    "if(window.hkAndroidTTSEnded)window.hkAndroidTTSEnded();", null));
-        }
-    }
-
-    private void encolarDesde(int desde) {
-        if (tts == null || oraciones == null || desde >= oraciones.size()) return;
-        boolean primero = true;
-        for (int i = desde; i < oraciones.size(); i++) {
-            Bundle params = new Bundle();
-            int modo = primero ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD;
-            tts.speak(oraciones.get(i), modo, params, "hk_" + i);
-            primero = false;
-        }
+    @Override
+    public void onEstadoCambiado(boolean hablando) {
+        evaluarJS("window.hkAudioState.hablando=" + hablando + "; window.hkAudioState.enPausaAndroid=" + (!hablando) + "; if(typeof window.hkAudioRefrescarVisual==='function')window.hkAudioRefrescarVisual();");
     }
 
     private class TTSBridge {
         @JavascriptInterface
-        public void speak(String oracionesJson) {
+        public void speak(String payloadJson) {
             runOnUiThread(() -> {
                 try {
-                    JSONArray arr = new JSONArray(oracionesJson);
+                    JSONObject obj = new JSONObject(payloadJson);
+                    String titulo = obj.optString("titulo", "Hunab Ku");
+                    JSONArray arr = obj.getJSONArray("oraciones");
                     List<String> lista = new ArrayList<>();
                     for (int i = 0; i < arr.length(); i++) lista.add(arr.getString(i));
-                    oraciones = lista;
-                    indiceActual = 0;
-                    encolarDesde(0);
+                    if (audioService != null) audioService.hablar(lista, titulo);
                 } catch (Exception e) {
                     android.util.Log.e("HK_TTS", "Error parseando oraciones", e);
                 }
@@ -200,34 +129,25 @@ public class MainActivity extends AppCompatActivity {
 
         @JavascriptInterface
         public void pause() {
-            runOnUiThread(() -> {
-                if (tts != null) tts.stop();
-            });
+            runOnUiThread(() -> { if (audioService != null) audioService.pausar(); });
         }
 
         @JavascriptInterface
         public void resume() {
-            runOnUiThread(() -> encolarDesde(indiceActual));
+            runOnUiThread(() -> { if (audioService != null) audioService.reanudar(); });
         }
 
         @JavascriptInterface
         public void stop() {
-            runOnUiThread(() -> {
-                if (tts != null) tts.stop();
-                oraciones = null;
-                indiceActual = 0;
-            });
+            runOnUiThread(() -> { if (audioService != null) audioService.detener(); });
         }
     }
 
     @Override
     protected void onDestroy() {
-        if (tts != null) {
-            tts.stop();
-            tts.shutdown();
-        }
-        if (splashHandler != null) {
-            splashHandler.removeCallbacksAndMessages(null);
+        if (serviceVinculado) {
+            unbindService(conexion);
+            serviceVinculado = false;
         }
         super.onDestroy();
     }
