@@ -119,7 +119,8 @@ public class HunabAudioService extends Service {
                 .addAction(hablando ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
                         hablando ? "Pausa" : "Reproducir", accionPendiente(ACTION_PLAY_PAUSE))
                 .addAction(android.R.drawable.ic_media_next, "Siguiente", accionPendiente(ACTION_NEXT))
-                .setStyle(new NotificationCompat.MediaStyle().setShowActionsInCompactView(0, 1, 2))
+                .setStyle(new androidx.media.app.NotificationCompat.MediaStyle()
+                        .setShowActionsInCompactView(0, 1, 2))
                 .build();
     }
 
