@@ -1,16 +1,23 @@
 package com.hunabku.app;
 
 import android.Manifest;
+import android.animation.ObjectAnimator;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
+import android.view.View;
+import android.view.animation.LinearInterpolator;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.ImageView;
+import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -28,6 +35,13 @@ public class MainActivity extends AppCompatActivity {
     private TextToSpeech tts;
     private List<String> oraciones;
     private int indiceActual = 0;
+
+    private View splashOverlay;
+    private TextView splashTimer;
+    private ObjectAnimator splashRotacion;
+    private Handler splashHandler;
+    private int splashSegundos = 0;
+    private boolean splashOculto = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,13 +70,61 @@ public class MainActivity extends AppCompatActivity {
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        webView.setWebViewClient(new WebViewClient());
+
+        iniciarSplash();
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                ocultarSplash();
+            }
+        });
         webView.setWebChromeClient(new WebChromeClient());
 
         iniciarTTS();
         webView.addJavascriptInterface(new TTSBridge(), "AndroidTTS");
 
         webView.loadUrl("https://inter2.pythonanywhere.com");
+    }
+
+    private void iniciarSplash() {
+        splashOverlay = findViewById(R.id.splashOverlay);
+        ImageView splashLogo = findViewById(R.id.splashLogo);
+        splashTimer = findViewById(R.id.splashTimer);
+
+        splashRotacion = ObjectAnimator.ofFloat(splashLogo, "rotation", 0f, 360f);
+        splashRotacion.setDuration(2200);
+        splashRotacion.setRepeatCount(ObjectAnimator.INFINITE);
+        splashRotacion.setInterpolator(new LinearInterpolator());
+        splashRotacion.start();
+
+        splashHandler = new Handler(Looper.getMainLooper());
+        splashHandler.post(tickSplash);
+
+        // Seguridad: si por algo onPageFinished no llega, ocultar a los 20s
+        splashHandler.postDelayed(this::ocultarSplash, 20000);
+    }
+
+    private final Runnable tickSplash = new Runnable() {
+        @Override
+        public void run() {
+            if (splashOculto || splashTimer == null) return;
+            splashSegundos++;
+            splashTimer.setText("Cargando... " + splashSegundos + "s");
+            splashHandler.postDelayed(this, 1000);
+        }
+    };
+
+    private void ocultarSplash() {
+        if (splashOculto || splashOverlay == null) return;
+        splashOculto = true;
+        if (splashRotacion != null) splashRotacion.cancel();
+        splashOverlay.animate()
+                .alpha(0f)
+                .setDuration(350)
+                .withEndAction(() -> splashOverlay.setVisibility(View.GONE))
+                .start();
     }
 
     private void iniciarTTS() {
@@ -163,6 +225,9 @@ public class MainActivity extends AppCompatActivity {
         if (tts != null) {
             tts.stop();
             tts.shutdown();
+        }
+        if (splashHandler != null) {
+            splashHandler.removeCallbacksAndMessages(null);
         }
         super.onDestroy();
     }
